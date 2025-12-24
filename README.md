@@ -12,7 +12,8 @@ Smart HR is an AI-powered recruitment tool designed to automate the screening of
 
 1.  **Clone the repository**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/Chenxi-dot/smartHR.git
+    git clone git@github.com:Chenxi-dot/smartHR.git
     cd smartHR
     ```
 
