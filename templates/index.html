@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intelligent Resume Screener - {{ role or 'Any Role' }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .candidate-card {
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            transition: transform 0.2s;
+            position: relative;
+        }
+        .candidate-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .score-badge {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        .timeline {
+            border-left: 2px solid #0d6efd;
+            padding-left: 20px;
+            margin-left: 10px;
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 15px;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -26px;
+            top: 5px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #0d6efd;
+        }
+        .top5-container {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .top5-card-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+        .resume-popover {
+            position: fixed;
+            z-index: 1050;
+            width: min(520px, calc(100vw - 24px));
+            max-height: min(70vh, 560px);
+            overflow: auto;
+            background: #fff;
+            border: 1px solid rgba(0,0,0,0.12);
+            border-radius: 10px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.18);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(6px);
+            transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+        }
+        .resume-popover.show {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .resume-popover-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(0,0,0,0.08);
+            position: sticky;
+            top: 0;
+            background: #fff;
+        }
+        .resume-popover-title {
+            font-weight: 700;
+            font-size: 0.95rem;
+            margin: 0;
+        }
+        .resume-popover-close {
+            border: 1px solid rgba(0,0,0,0.12);
+            background: #fff;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 0.9rem;
+        }
+        .resume-popover-close:hover {
+            background: #f6f7f8;
+        }
+        .resume-popover-body {
+            padding: 12px 14px 14px 14px;
+        }
+        .resume-section {
+            margin-bottom: 12px;
+        }
+        .resume-section-title {
+            font-weight: 700;
+            font-size: 0.9rem;
+            margin-bottom: 6px;
+        }
+        .resume-pill {
+            display: inline-block;
+            margin: 3px 6px 0 0;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: #f1f3f5;
+            font-size: 0.78rem;
+        }
+        .resume-muted {
+            color: #6c757d;
+            font-size: 0.85rem;
+        }
+        .candidate-meta {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .candidate-meta-item {
+            color: #6c757d;
+            font-size: 0.85rem;
+        }
+        @media (max-width: 576px) {
+            .top5-container {
+                padding: 14px;
+            }
+            .resume-popover {
+                width: calc(100vw - 16px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Intelligent Resume Screener ({{ role or 'Any Role' }})</h1>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                {% if error %}
+                <div class="alert alert-danger" role="alert">{{ error }}</div>
+                {% endif %}
+
+                <div id="client-progress" class="mb-4" style="display:none;">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span id="progress-status" class="fw-bold text-primary">Preparing...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress" style="height: 20px;">
+                        <div id="progress-bar-inner"
+                             class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                             role="progressbar"
+                             style="width: 0%">
+                        </div>
+                    </div>
+                    <div id="live-logs" class="mt-2 p-2 bg-light border rounded" style="font-size: 0.8rem; max-height: 100px; overflow-y: auto;">
+                        <div class="text-muted">Waiting for engine response...</div>
+                    </div>
+                </div>
+
+                <form action="/match" method="post" id="match-form">
+                    <div class="mb-3">
+                        <label for="role" class="form-label">Target Role (optional)</label>
+                        <input type="text" class="form-control" id="role" name="role" placeholder="e.g., Data Engineer, Data Analyst, Backend Engineer" value="{{ role or '' }}">
+                        <div class="form-text">留空则不按岗位过滤，或让模型自动理解 JD。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="jd" class="form-label">Job Description (JD)</label>
+                        <textarea class="form-control" id="jd" name="jd" rows="5" placeholder="Looking for a Senior Data Engineer with Python, Spark, and AWS experience..." required>{{ jd or '' }}</textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Analyze & Match</button>
+                </form>
+            </div>
+        </div>
+
+        {% if candidates %}
+        <div class="top5-container">
+            <h3 class="mb-3">Top 5 Recommendations</h3>
+            <div class="row">
+                {% for candidate in candidates[:5] %}
+                <div class="col-md-2 col-sm-4 mb-2">
+                    <div class="card text-center h-100 border-primary">
+                        <div class="card-body">
+                            <div class="top5-card-title">Candidate #{{ loop.index }}</div>
+                            <span class="badge bg-success score-badge">{{ candidate.total_score }}</span>
+                            <p class="card-text small mt-2">Hard Pass: {{ candidate.hard_pass_rate }}%</p>
+                            <a href="#cand-{{ candidate.id }}" class="btn btn-sm btn-outline-primary stretched-link">View</a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <h3>Top Results ({{ candidates|length }})</h3>
+        <div class="row">
+            {% for candidate in candidates %}
+            <div class="col-md-12" id="cand-{{ candidate.id }}">
+                <div
+                    class="candidate-card js-candidate-card"
+                    tabindex="0"
+                    data-candidate-id="{{ candidate.id }}"
+                    data-position="{{ candidate.position|default('', true) }}"
+                    data-total-score="{{ candidate.total_score }}"
+                    data-hard-pass-rate="{{ candidate.hard_pass_rate }}"
+                    data-soft-score="{{ candidate.soft_score }}"
+                    data-english-level="{{ candidate.english_level|default('', true) }}"
+                    data-skills='{{ candidate.skills|default([], true)|tojson }}'
+                    data-education='{{ candidate.education|default([], true)|tojson }}'
+                    data-experience='{{ candidate.experience|default([], true)|tojson }}'
+                    data-projects='{{ candidate.projects|default([], true)|tojson }}'
+                    data-certifications='{{ candidate.certifications|default([], true)|tojson }}'
+                >
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h4 class="mb-1">{{ candidate.position }}</h4>
+                            <div class="small text-muted">ID: {{ candidate.id }} | English: {{ candidate.english_level|default('unknown', true) }}</div>
+                            <div class="mt-1">
+                                {% for tag in candidate.tags %}
+                                <span class="badge bg-info text-dark">{{ tag }}</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div class="text-success score-badge">Match: {{ candidate.total_score }}</div>
+                            <small class="text-muted">Hard: {{ candidate.hard_pass_rate }}% | SoftSim: {{ candidate.soft_score }}</small>
+                        </div>
+                    </div>
+                    <div class="candidate-meta mt-2">
+                        <div class="candidate-meta-item">Hover or click to view parsed resume</div>
+                        <div class="candidate-meta-item">ID: {{ candidate.id }}</div>
+                        <div class="candidate-meta-item">English: {{ candidate.english_level|default('unknown', true) }}</div>
+                    </div>
+
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <h5>Skills</h5>
+                            <p>
+                                {% for skill in candidate.skills %}
+                                <span class="badge bg-secondary">{{ skill }}</span>
+                                {% endfor %}
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <h5>Education</h5>
+                            <ul class="list-unstyled">
+                                {% for edu in candidate.education %}
+                                <li><strong>{{ edu.school }}</strong> - {{ edu.major }} ({{ edu.degree }})</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <h5>Work Experience Timeline</h5>
+                        <div class="timeline">
+                            {% for work in candidate.experience %}
+                            <div class="timeline-item">
+                                <strong>{{ work.position }}</strong> at {{ work.company }}
+                                <br>
+                                <small class="text-muted">{{ work.period }}</small>
+                                <p class="mb-0 small">{{ work.responsibilities|join(', ') }}</p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="resume-popover" id="resumePopover" role="dialog" aria-modal="false" aria-hidden="true">
+        <div class="resume-popover-header">
+            <h6 class="resume-popover-title" id="resumePopoverTitle">Parsed Resume</h6>
+            <button type="button" class="resume-popover-close" id="resumePopoverClose" aria-label="Close">Close</button>
+        </div>
+        <div class="resume-popover-body" id="resumePopoverBody"></div>
+    </div>
+
+    <script>
+        (function () {
+            const popover = document.getElementById('resumePopover');
+            const popoverBody = document.getElementById('resumePopoverBody');
+            const popoverTitle = document.getElementById('resumePopoverTitle');
+            const closeBtn = document.getElementById('resumePopoverClose');
+            let activeCard = null;
+            let hideTimer = null;
+
+            function safeJsonParse(value, fallback) {
+                if (!value) return fallback;
+                try {
+                    return JSON.parse(value);
+                } catch (e) {
+                    return fallback;
+                }
+            }
+
+            function escapeHtml(str) {
+                return String(str ?? '')
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;')
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#039;');
+            }
+
+            function renderList(items, emptyText) {
+                if (!items || !items.length) {
+                    return `<div class="resume-muted">${escapeHtml(emptyText)}</div>`;
+                }
+                return `<ul class="mb-0 ps-3">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
+            }
+
+            function renderEducation(education) {
+                if (!education || !education.length) return `<div class="resume-muted">No education data</div>`;
+                return education.map(e => {
+                    const school = escapeHtml(e.school || 'Not specified');
+                    const major = escapeHtml(e.major || '');
+                    const degree = escapeHtml(e.degree || '');
+                    const dates = [e.start_date, e.end_date].filter(Boolean).join(' ~ ');
+                    return `
+                        <div class="mb-2">
+                            <div><strong>${school}</strong></div>
+                            <div class="resume-muted">${[major, degree].filter(Boolean).join(' / ') || 'Not specified'}</div>
+                            ${dates ? `<div class="resume-muted">${escapeHtml(dates)}</div>` : ``}
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            function renderWork(experience) {
+                if (!experience || !experience.length) return `<div class="resume-muted">No work experience data</div>`;
+                return experience.map(w => {
+                    const company = escapeHtml(w.company || 'Not specified');
+                    const position = escapeHtml(w.position || 'Not specified');
+                    const period = escapeHtml(w.period || '');
+                    const responsibilities = Array.isArray(w.responsibilities) ? w.responsibilities : [];
+                    return `
+                        <div class="mb-2">
+                            <div><strong>${position}</strong> <span class="resume-muted">at ${company}</span></div>
+                            ${period ? `<div class="resume-muted">${period}</div>` : ``}
+                            ${responsibilities.length ? renderList(responsibilities, '') : `<div class="resume-muted">No responsibilities listed</div>`}
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            function renderSkills(skills) {
+                if (!skills || !skills.length) return `<div class="resume-muted">No skills data</div>`;
+                return skills.map(s => `<span class="resume-pill">${escapeHtml(s)}</span>`).join('');
+            }
+
+            function renderCerts(certs) {
+                if (!certs || !certs.length) return `<div class="resume-muted">No certifications data</div>`;
+                return certs.map(c => {
+                    if (typeof c === 'string') return `<span class="resume-pill">${escapeHtml(c)}</span>`;
+                    const name = escapeHtml(c.name || 'Certification');
+                    const level = escapeHtml(c.level || '');
+                    const expiry = escapeHtml(c.expiry || '');
+                    return `<div class="mb-1"><strong>${name}</strong>${level ? ` <span class="resume-muted">(${level})</span>` : ``}${expiry ? ` <span class="resume-muted">/ ${expiry}</span>` : ``}</div>`;
+                }).join('');
+            }
+
+            function renderProjects(projects) {
+                if (!projects || !projects.length) return `<div class="resume-muted">No project experience data</div>`;
+                return projects.map(p => {
+                    if (typeof p === 'string') return `<div class="mb-1">${escapeHtml(p)}</div>`;
+                    const name = escapeHtml(p.name || p.project || 'Project');
+                    const role = escapeHtml(p.role || '');
+                    const desc = escapeHtml(p.description || '');
+                    return `
+                        <div class="mb-2">
+                            <div><strong>${name}</strong>${role ? ` <span class="resume-muted">(${role})</span>` : ``}</div>
+                            ${desc ? `<div class="resume-muted">${desc}</div>` : ``}
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            function buildPopoverContent(card) {
+                const position = card.dataset.position || '';
+                const cid = card.dataset.candidateId || '';
+                const totalScore = card.dataset.totalScore || '';
+                const hardPass = card.dataset.hardPassRate || '';
+                const softScore = card.dataset.softScore || '';
+
+                const education = safeJsonParse(card.dataset.education, []);
+                const experience = safeJsonParse(card.dataset.experience, []);
+                const skills = safeJsonParse(card.dataset.skills, []);
+                const projects = safeJsonParse(card.dataset.projects, []);
+                const certs = safeJsonParse(card.dataset.certifications, []);
+
+                popoverTitle.textContent = `Parsed Resume - ${position || 'Candidate'} - ${cid}`;
+
+                return `
+                    <div class="resume-section">
+                        <div class="resume-section-title">Match Summary</div>
+                        <div class="resume-muted">Match: ${escapeHtml(totalScore)} | Hard: ${escapeHtml(hardPass)}% | SoftSim: ${escapeHtml(softScore)}</div>
+                    </div>
+                    <div class="resume-section">
+                        <div class="resume-section-title">Education</div>
+                        ${renderEducation(education)}
+                    </div>
+                    <div class="resume-section">
+                        <div class="resume-section-title">Work Experience</div>
+                        ${renderWork(experience)}
+                    </div>
+                    <div class="resume-section">
+                        <div class="resume-section-title">Skills</div>
+                        ${renderSkills(skills)}
+                    </div>
+                    <div class="resume-section">
+                        <div class="resume-section-title">Project Experience</div>
+                        ${renderProjects(projects)}
+                    </div>
+                    <div class="resume-section mb-0">
+                        <div class="resume-section-title">Certifications</div>
+                        ${renderCerts(certs)}
+                    </div>
+                `;
+            }
+
+            // Show client-side progress bar while request is in-flight + poll backend
+            const form = document.getElementById('match-form');
+            const clientProgress = document.getElementById('client-progress');
+            const progressBarInner = document.getElementById('progress-bar-inner');
+            const progressStatus = document.getElementById('progress-status');
+            const progressPercent = document.getElementById('progress-percent');
+            const liveLogs = document.getElementById('live-logs');
+            let progressTimer = null;
+
+            function updateProgressUI(data) {
+                const pct = Number(data?.percentage || 0);
+                const status = data?.status || 'Working...';
+                progressBarInner.style.width = `${pct}%`;
+                progressPercent.textContent = `${pct}%`;
+                progressStatus.textContent = status;
+                if (Array.isArray(data?.logs) && data.logs.length) {
+                    liveLogs.innerHTML = data.logs.map(log => `<div>&gt; ${log}</div>`).join('');
+                    liveLogs.scrollTop = liveLogs.scrollHeight;
+                }
+            }
+
+            if (form && clientProgress) {
+                form.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    clientProgress.style.display = 'block';
+                    updateProgressUI({ percentage: 0, status: 'Preparing...', logs: [] });
+                    if (progressTimer) clearInterval(progressTimer);
+                    progressTimer = setInterval(async () => {
+                        try {
+                            const resp = await fetch('/get_progress');
+                            const data = await resp.json();
+                            updateProgressUI(data);
+                        } catch (err) {
+                            console.error('Progress fetch failed', err);
+                        }
+                    }, 1000);
+
+                    try {
+                        const formData = new FormData(form);
+                        const resp = await fetch('/match', { method: 'POST', body: formData });
+                        const html = await resp.text();
+                        if (progressTimer) clearInterval(progressTimer);
+                        document.open();
+                        document.write(html);
+                        document.close();
+                    } catch (err) {
+                        if (progressTimer) clearInterval(progressTimer);
+                        progressStatus.textContent = 'Submit failed';
+                        console.error('Submit failed', err);
+                    }
+                });
+                window.addEventListener('beforeunload', () => {
+                    if (progressTimer) clearInterval(progressTimer);
+                });
+            }
+
+            function clamp(value, min, max) {
+                return Math.min(max, Math.max(min, value));
+            }
+
+            function positionPopover(card) {
+                const rect = card.getBoundingClientRect();
+                const margin = 10;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+
+                popover.style.left = '0px';
+                popover.style.top = '0px';
+                popover.classList.add('show');
+
+                const popRect = popover.getBoundingClientRect();
+
+                let left = rect.right + margin;
+                let top = rect.top;
+
+                if (vw <= 768) {
+                    left = margin;
+                    top = rect.bottom + margin;
+                }
+
+                if (left + popRect.width > vw - margin) {
+                    left = rect.left - popRect.width - margin;
+                }
+                if (left < margin) {
+                    left = clamp(rect.left, margin, vw - popRect.width - margin);
+                }
+                if (top + popRect.height > vh - margin) {
+                    top = vh - popRect.height - margin;
+                }
+                top = clamp(top, margin, vh - popRect.height - margin);
+
+                popover.style.left = `${Math.round(left)}px`;
+                popover.style.top = `${Math.round(top)}px`;
+            }
+
+            function showPopover(card) {
+                if (!card) return;
+                if (hideTimer) {
+                    clearTimeout(hideTimer);
+                    hideTimer = null;
+                }
+                activeCard = card;
+                popoverBody.innerHTML = buildPopoverContent(card);
+                popover.setAttribute('aria-hidden', 'false');
+                positionPopover(card);
+            }
+
+            function hidePopover(immediate) {
+                const doHide = () => {
+                    popover.classList.remove('show');
+                    popover.setAttribute('aria-hidden', 'true');
+                    activeCard = null;
+                };
+                if (immediate) {
+                    doHide();
+                    return;
+                }
+                hideTimer = setTimeout(doHide, 120);
+            }
+
+            document.querySelectorAll('.js-candidate-card').forEach(card => {
+                card.addEventListener('mouseenter', () => showPopover(card));
+                card.addEventListener('mouseleave', () => hidePopover(false));
+                card.addEventListener('focus', () => showPopover(card));
+                card.addEventListener('blur', () => hidePopover(false));
+                card.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (activeCard === card && popover.classList.contains('show')) {
+                        hidePopover(true);
+                        return;
+                    }
+                    showPopover(card);
+                });
+            });
+
+            popover.addEventListener('mouseenter', () => {
+                if (hideTimer) {
+                    clearTimeout(hideTimer);
+                    hideTimer = null;
+                }
+            });
+            popover.addEventListener('mouseleave', () => hidePopover(false));
+
+            closeBtn.addEventListener('click', () => hidePopover(true));
+            document.addEventListener('click', (e) => {
+                if (!popover.classList.contains('show')) return;
+                if (popover.contains(e.target)) return;
+                if (activeCard && activeCard.contains(e.target)) return;
+                hidePopover(true);
+            });
+            window.addEventListener('scroll', () => {
+                if (activeCard) positionPopover(activeCard);
+            }, { passive: true });
+            window.addEventListener('resize', () => {
+                if (activeCard) positionPopover(activeCard);
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hidePopover(true);
+            });
+        })();
+    </script>
+</body>
+</html>
