@@ -207,6 +207,7 @@ cython_debug/
 .jpeg
 .gif
 .svg
+.db
 
 *.parquet
 *.csv
@@ -219,3 +220,4 @@ cython_debug/
 *.jpg
 *.gif
 *.svg
+*.db
